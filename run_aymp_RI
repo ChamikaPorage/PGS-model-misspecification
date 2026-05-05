@@ -1,0 +1,113 @@
+# ============================================================
+# RUN asymptotic RI
+# ============================================================
+
+###Simulation 1###
+source("C:/Users/chapo752/Dropbox/PhD work- Chamika Porage/Second paper/R codes/Simulation 1/var_ri.R")
+ 
+##Design A##
+source("C:/Users/chapo752/Dropbox/PhD work- Chamika Porage/Second paper/R codes/Simulation 1/Sim1_DesA_cf.R")
+
+N    <- 3000
+seed <- 2025
+R    <- 1000
+ 
+truth_pop <- 3
+
+simA1 <- gen.data.A(N, seed)
+
+outA1 <- run_mc_true_false_parametric(simA1, truth_pop = truth_pop)
+
+# Linear TRUE 
+cat("\nParametric TRUE summary:\n")
+print(round(outA1$sum_true, 3))
+
+# Linear False
+cat("\nParametric FALSE summary:\n")
+print(round(outA1$sum_false, 3))
+
+
+
+
+##Design B##
+source("C:/Users/chapo752/Dropbox/PhD work- Chamika Porage/Second paper/R codes/Simulation 1/Sim1_DesB_cf.R")
+        
+simB1 <- gen.data.B(N, seed)
+
+outB1 <- run_mc_true_false_parametric(simB1, truth_pop = truth_pop)
+
+# Linear TRUE 
+cat("\nParametric TRUE summary:\n")
+print(round(outB1$sum_true, 3))
+
+# Linear False
+cat("\nParametric FALSE summary:\n")
+print(round(outB1$sum_false, 3))
+
+##Design C##
+source("C:/Users/chapo752/Dropbox/PhD work- Chamika Porage/Second paper/R codes/Simulation 1/Sim1_DesC_cf.R")
+      
+simC1 <- gen.data.C(N, seed)
+
+outC1 <- run_mc_true_false_parametric(simC1, truth_pop = truth_pop)
+
+# Linear TRUE 
+cat("\nParametric TRUE summary:\n")
+print(round(outC1$sum_true, 3))
+
+# Linear False
+cat("\nParametric FALSE summary:\n")
+print(round(outC1$sum_false, 3)) 
+
+###Simulation 2###
+
+##Design A##
+source("C:/Users/chapo752/Dropbox/PhD work- Chamika Porage/Second paper/R codes/Simulation 2/Sim2_DesA_cf.R")
+        
+truth_pop <- 3.7
+        
+simA2 <- gen.data.A2(N, seed)
+        
+outA2 <- run_mc_true_false_parametric(simA2, truth_pop = truth_pop)
+
+# Linear TRUE 
+cat("\nParametric TRUE summary:\n")
+print(round(outA2$sum_true, 3))
+
+# Linear False
+cat("\nParametric FALSE summary:\n")
+print(round(outA2$sum_false, 3))
+
+##Design B##
+source("C:/Users/chapo752/Dropbox/PhD work- Chamika Porage/Second paper/R codes/Simulation 2/Sim2_DesB_cf.R")
+        
+truth_pop <- 3.7
+        
+simB2 <- gen.data.B2(N, seed)
+        
+outB2 <- run_mc_true_false_parametric(simB2, truth_pop = truth_pop)
+
+# Linear TRUE 
+cat("\nParametric TRUE summary:\n")
+print(round(outB2$sum_true, 3))
+
+# Linear False
+cat("\nParametric FALSE summary:\n")
+print(round(outB2$sum_false, 3))
+
+##Design C##
+source("C:/Users/chapo752/Dropbox/PhD work- Chamika Porage/Second paper/R codes/Simulation 2/Sim2_DesC_cf.R")
+         
+truth_pop <- 3.7
+
+simC2 <- gen.data.C2(N, seed)
+        
+outC2 <- run_mc_true_false_parametric(simC2, truth_pop = truth_pop)
+
+# Linear TRUE 
+cat("\nParametric TRUE summary:\n")
+print(round(outC2$sum_true, 3))
+
+# Linear False
+cat("\nParametric FALSE summary:\n")
+print(round(outC2$sum_false, 3))
