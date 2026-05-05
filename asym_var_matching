@@ -1,0 +1,253 @@
+############################################################
+# Asymptotic variance of Matching estimators
+############################################################
+
+suppressPackageStartupMessages({
+  library(Matching)
+  library(stats)
+})
+
+# ---------------- helpers ----------------
+clip01 <- function(p, eps = 1e-6) pmin(pmax(p, eps), 1 - eps)
+
+mean_finite <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) == 0) NA_real_ else mean(x)
+}
+
+# ---- arm-specific local variances evaluated at each i (1D abs distance) ----
+sigma_bar_by_arm_1d <- function(Y, Tr, score, L = 2) {
+  N <- length(Y)
+  sig1_hat <- rep(NA_real_, N)
+  sig0_hat <- rep(NA_real_, N)
+  
+  for (i in seq_len(N)) {
+    pool1 <- setdiff(which(Tr == 1), i)
+    if (length(pool1) >= L) {
+      nn1 <- pool1[order(abs(score[pool1] - score[i]))[1:L]]
+      if (length(nn1) >= 2) {
+        yy <- Y[nn1]
+        sig1_hat[i] <- sum((yy - mean(yy))^2) / (L - 1)
+      }
+    }
+    
+    pool0 <- setdiff(which(Tr == 0), i)
+    if (length(pool0) >= L) {
+      nn0 <- pool0[order(abs(score[pool0] - score[i]))[1:L]]
+      if (length(nn0) >= 2) {
+        yy <- Y[nn0]
+        sig0_hat[i] <- sum((yy - mean(yy))^2) / (L - 1)
+      }
+    }
+  }
+  list(sig1_hat = sig1_hat, sig0_hat = sig0_hat)
+}
+
+# ---- arm-specific local variances evaluated at each i (2D Euclidean) ----
+sigma_bar_by_arm_euclid <- function(Y, Tr, X, L = 2) {
+  X <- as.matrix(X)
+  N <- length(Y)
+  sig1_hat <- rep(NA_real_, N)
+  sig0_hat <- rep(NA_real_, N)
+  
+  for (i in seq_len(N)) {
+    pool1 <- setdiff(which(Tr == 1), i)
+    if (length(pool1) >= L) {
+      diffs1 <- X[pool1, , drop=FALSE] -
+        matrix(X[i, ], nrow=length(pool1), ncol=ncol(X), byrow=TRUE)
+      d1 <- sqrt(rowSums(diffs1^2))
+      nn1 <- pool1[order(d1)[1:L]]
+      if (length(nn1) >= 2) {
+        yy <- Y[nn1]
+        sig1_hat[i] <- sum((yy - mean(yy))^2) / (L - 1)
+      }
+    }
+    
+    pool0 <- setdiff(which(Tr == 0), i)
+    if (length(pool0) >= L) {
+      diffs0 <- X[pool0, , drop=FALSE] -
+        matrix(X[i, ], nrow=length(pool0), ncol=ncol(X), byrow=TRUE)
+      d0 <- sqrt(rowSums(diffs0^2))
+      nn0 <- pool0[order(d0)[1:L]]
+      if (length(nn0) >= 2) {
+        yy <- Y[nn0]
+        sig0_hat[i] <- sum((yy - mean(yy))^2) / (L - 1)
+      }
+    }
+  }
+  list(sig1_hat = sig1_hat, sig0_hat = sig0_hat)
+}
+
+# =================
+# One replicate
+# =================
+one_rep_match_se_both <- function(datat, which = c("lin_true","lin_false"), M = 1, L = 2) {
+  which <- match.arg(which)
+  
+  Y  <- as.numeric(datat$y)
+  Tr <- as.numeric(datat$tr)
+  
+  if (which == "lin_true") {
+    mu0 <- as.numeric(datat$mu0)
+    mu1 <- as.numeric(datat$mu1)
+  } else {
+    mu0 <- as.numeric(datat$mu0f)
+    mu1 <- as.numeric(datat$mu1f)
+  }
+  
+  if (sum(Tr == 1) < max(L + 1, 5) || sum(Tr == 0) < max(L + 1, 5)) {
+    return(list(pgs=list(tau=NA_real_, se=NA_real_, sigma2=NA_real_),
+                fpgs=list(tau=NA_real_, se=NA_real_, sigma2=NA_real_)))
+  }
+  
+  # -------------------------
+  # (A) PGS: match on mu0 (1D)
+  # -------------------------
+  tau_pgs <- tryCatch(
+    Match(Y = Y, Tr = Tr, X = mu0, estimand = "ATE", M = M)$est,
+    error = function(e) NA_real_
+  )
+  
+  p_hat_pgs <- tryCatch({
+    mod <- glm(Tr ~ mu0, family = binomial())
+    clip01(predict(mod, type = "response"))
+  }, error = function(e) rep(NA_real_, length(Y)))
+  
+  df_pgs <- data.frame(Y=Y, Tr=Tr, mu0=mu0)
+  g0_pgs <- lm(Y ~ mu0, data = df_pgs[Tr == 0, , drop=FALSE])
+  g1_pgs <- lm(Y ~ mu0, data = df_pgs[Tr == 1, , drop=FALSE])
+  m0_pgs <- predict(g0_pgs, newdata = df_pgs)
+  m1_pgs <- predict(g1_pgs, newdata = df_pgs)
+  tau_c_pgs <- mean(m1_pgs - m0_pgs)
+  
+  term1_pgs <- mean((m1_pgs - m0_pgs - tau_c_pgs)^2)
+  
+  sig_pgs  <- sigma_bar_by_arm_1d(Y, Tr, score = mu0, L = L)
+  sig1_pgs <- sig_pgs$sig1_hat
+  sig0_pgs <- sig_pgs$sig0_hat
+  
+  w2_pgs <- ( 1/p_hat_pgs + (1/(2*M)) * (1/p_hat_pgs - p_hat_pgs) )
+  w3_pgs <- ( 1/(1 - p_hat_pgs) + (1/(2*M)) * (1/(1 - p_hat_pgs) - (1 - p_hat_pgs)) )
+  
+  term2_pgs <- mean_finite(sig1_pgs * w2_pgs)
+  term3_pgs <- mean_finite(sig0_pgs * w3_pgs)
+  
+  if (!is.finite(tau_pgs) || !is.finite(term2_pgs) || !is.finite(term3_pgs)) {
+    pgs <- list(tau=NA_real_, se=NA_real_, sigma2=NA_real_)
+  } else {
+    sigma2_pgs <- term1_pgs + term2_pgs + term3_pgs
+    se_pgs <- sqrt(sigma2_pgs / length(Y))
+    pgs <- list(tau=unname(tau_pgs), se=unname(se_pgs), sigma2=unname(sigma2_pgs))
+  }
+  
+  # ------------------------------
+  # (B) FPGS: match on (mu1,mu0)
+  # ------------------------------
+  X_fpgs <- as.matrix(cbind(mu1 = mu1, mu0 = mu0))
+  
+  tau_fpgs <- tryCatch(
+    Match(Y = Y, Tr = Tr, X = X_fpgs, Weight.matrix = diag(2),
+          estimand = "ATE", M = M)$est,
+    error = function(e) NA_real_
+  )
+  
+  p_hat_fpgs <- tryCatch({
+    mod <- glm(Tr ~ mu1 + mu0, family = binomial())
+    clip01(predict(mod, type = "response"))
+  }, error = function(e) rep(NA_real_, length(Y)))
+  
+  df_fpgs <- data.frame(Y=Y, Tr=Tr, mu1=mu1, mu0=mu0)
+  g0_fpgs <- lm(Y ~ mu1 + mu0, data = df_fpgs[Tr == 0, , drop=FALSE])
+  g1_fpgs <- lm(Y ~ mu1 + mu0, data = df_fpgs[Tr == 1, , drop=FALSE])
+  m0_fpgs <- predict(g0_fpgs, newdata = df_fpgs)
+  m1_fpgs <- predict(g1_fpgs, newdata = df_fpgs)
+  tau_c_fpgs <- mean(m1_fpgs - m0_fpgs)
+  
+  term1_fpgs <- mean((m1_fpgs - m0_fpgs - tau_c_fpgs)^2)
+  
+  sig_fpgs  <- sigma_bar_by_arm_euclid(Y, Tr, X = X_fpgs, L = L)
+  sig1_fpgs <- sig_fpgs$sig1_hat
+  sig0_fpgs <- sig_fpgs$sig0_hat
+  
+  w2_fpgs <- ( 1/p_hat_fpgs + (1/(2*M)) * (1/p_hat_fpgs - p_hat_fpgs) )
+  w3_fpgs <- ( 1/(1 - p_hat_fpgs) + (1/(2*M)) * (1/(1 - p_hat_fpgs) - (1 - p_hat_fpgs)) )
+  
+  term2_fpgs <- mean_finite(sig1_fpgs * w2_fpgs)
+  term3_fpgs <- mean_finite(sig0_fpgs * w3_fpgs)
+  
+  if (!is.finite(tau_fpgs) || !is.finite(term2_fpgs) || !is.finite(term3_fpgs)) {
+    fpgs <- list(tau=NA_real_, se=NA_real_, sigma2=NA_real_)
+  } else {
+    sigma2_fpgs <- term1_fpgs + term2_fpgs + term3_fpgs
+    se_fpgs <- sqrt(sigma2_fpgs / length(Y))
+    fpgs <- list(tau=unname(tau_fpgs), se=unname(se_fpgs), sigma2=unname(sigma2_fpgs))
+  }
+  
+  list(pgs = pgs, fpgs = fpgs)
+}
+# ---------------- MC summary ----------------
+summarize_mc <- function(res, truth, alpha = 0.05) {
+  z <- qnorm(1 - alpha/2)
+  ok <- is.finite(res$tau) & is.finite(res$se) & res$se > 0
+  r <- res[ok, , drop = FALSE]
+  ci_lo <- r$tau - z * r$se
+  ci_hi <- r$tau + z * r$se
+  
+  data.frame(
+    R_used    = nrow(r),
+    n_fail    = nrow(res) - nrow(r),
+    mean_tau  = mean(r$tau),
+    mc_bias   = mean(r$tau - truth),
+    mc_mse    = mean((r$tau - truth)^2),
+    emp_sd    = sd(r$tau),
+    mean_se   = mean(r$se),
+    cover_95  = mean(ci_lo <= truth & truth <= ci_hi)
+  )
+}
+
+# ============================================================
+# MC runner for both PGS and FPGS summaries
+# ============================================================
+run_matching_mc_both <- function(simA,
+                                 which = c("lin_true","lin_false"),
+                                 truth, M = 1, L = 2,
+                                 verbose_errors = FALSE) {
+  which <- match.arg(which)
+  
+  res_pgs  <- vector("list", length(simA))
+  res_fpgs <- vector("list", length(simA))
+  
+  for (k in seq_along(simA)) {
+    d <- as.data.frame(simA[[k]])
+    
+    fit <- tryCatch(
+      one_rep_match_se_both(d, which = which, M = M, L = L),
+      error = function(e) {
+        if (isTRUE(verbose_errors)) message("rep ", k, ": ", e$message)
+        NULL
+      }
+    )
+    
+    if (is.null(fit) || !is.finite(fit$pgs$tau) || !is.finite(fit$pgs$se) || fit$pgs$se <= 0) {
+      res_pgs[[k]] <- data.frame(tau = NA_real_, se = NA_real_, truth = truth)
+    } else {
+      res_pgs[[k]] <- data.frame(tau = fit$pgs$tau, se = fit$pgs$se, truth = truth)
+    }
+    
+    if (is.null(fit) || !is.finite(fit$fpgs$tau) || !is.finite(fit$fpgs$se) || fit$fpgs$se <= 0) {
+      res_fpgs[[k]] <- data.frame(tau = NA_real_, se = NA_real_, truth = truth)
+    } else {
+      res_fpgs[[k]] <- data.frame(tau = fit$fpgs$tau, se = fit$fpgs$se, truth = truth)
+    }
+  }
+  
+  res_pgs  <- do.call(rbind, res_pgs)
+  res_fpgs <- do.call(rbind, res_fpgs)
+  
+  list(
+    res_pgs      = res_pgs,
+    res_fpgs     = res_fpgs,
+    summary_pgs  = summarize_mc(res_pgs, truth = truth),
+    summary_fpgs = summarize_mc(res_fpgs, truth = truth)
+  )
+}
