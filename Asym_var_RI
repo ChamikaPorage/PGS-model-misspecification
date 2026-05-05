@@ -1,0 +1,134 @@
+############################################################
+# Asymptotic variance of RI based on FPGS
+# Full stacked M-estimation (geex) for FPGS-based RI:
+#   Step 1: first-stage ORs  m1(X)=X^T beta1, m0(X)=X^T beta0
+#   Step 2: construct Z = (1, m0(X), m1(X))
+#   Step 3: second-stage ORs mu1(Z)=Z^T alpha1, mu0(Z)=Z^T alpha0
+#   Step 4: target params mu1_bar=E[mu1(Z)], mu0_bar=E[mu0(Z)], tau=mu1_bar-mu0_bar
+#
+# theta = (beta1, beta0, alpha1, alpha0, mu1_bar, mu0_bar, tau)
+# Sandwich variance via geex::vcov (asymptotic variance)
+############################################################
+
+suppressPackageStartupMessages({
+  library(geex)
+  library(stats)
+})
+
+
+safe_coef <- function(fit, k) {
+  b <- as.numeric(coef(fit))
+  if (length(b) < k) b <- c(b, rep(0, k - length(b)))
+  b[is.na(b)] <- 0
+  b
+}
+
+# ============================================================
+# Full stacked FPGS-RI (linear first-stage + linear second-stage)
+# ============================================================
+
+# Uses predicted mu0/mu1 columns as fixed inputs:
+# Z = (1, mu0_hat, mu1_hat)
+# Estimates alpha1, alpha0, mu1_bar, mu0_bar, tau with sandwich SE
+ri_geex_fpgs_pred <- function(dat, m0_col, m1_col) {
+  stopifnot(all(c("y","tr", m0_col, m1_col) %in% names(dat)))
+  
+  Y  <- as.numeric(dat$y)
+  Tt <- as.numeric(dat$tr)
+  m0 <- as.numeric(dat[[m0_col]])
+  m1 <- as.numeric(dat[[m1_col]])
+  
+  Z <- cbind(1, m0, m1)  # (Intercept, mu0, mu1)
+  q <- ncol(Z)           # 3
+  
+  # OLS in each arm
+  fit_a1 <- lm.fit(Z[Tt == 1, , drop=FALSE], Y[Tt == 1])
+  fit_a0 <- lm.fit(Z[Tt == 0, , drop=FALSE], Y[Tt == 0])
+  alpha1_0 <- safe_coef(fit_a1, q)
+  alpha0_0 <- safe_coef(fit_a0, q)
+  
+  mu1x_0 <- drop(Z %*% alpha1_0)
+  mu0x_0 <- drop(Z %*% alpha0_0)
+  mu1_bar_0 <- mean(mu1x_0)
+  mu0_bar_0 <- mean(mu0x_0)
+  tau_0 <- mu1_bar_0 - mu0_bar_0
+  
+  theta0 <- c(alpha1_0, alpha0_0, mu1_bar_0, mu0_bar_0, tau_0)
+  
+  units <- data.frame(Y=Y, Tt=Tt, z1=Z[,1], z2=Z[,2], z3=Z[,3])
+  
+  estFUN <- function(data) {
+    function(theta) {
+      alpha1  <- theta[1:3]
+      alpha0  <- theta[4:6]
+      mu1_bar <- theta[7]
+      mu0_bar <- theta[8]
+      tau     <- theta[9]
+      
+      z <- c(data$z1, data$z2, data$z3)
+      mu1x <- sum(z * alpha1)
+      mu0x <- sum(z * alpha0)
+      
+      psi_a1 <- data$Tt * (data$Y - mu1x) * z
+      psi_a0 <- (1 - data$Tt) * (data$Y - mu0x) * z
+      
+      psi_mu1 <- mu1_bar - mu1x
+      psi_mu0 <- mu0_bar - mu0x
+      psi_tau <- tau - (mu1_bar - mu0_bar)
+      
+      c(psi_a1, psi_a0, psi_mu1, psi_mu0, psi_tau)
+    }
+  }
+  
+  fit <- geex::m_estimate(estFUN = estFUN, data = units, roots = theta0, compute_roots = FALSE)
+  V <- vcov(fit)
+  
+  tau_hat <- coef(fit)[9]
+  se_tau  <- sqrt(V[9, 9])
+  
+  list(tau_hat = unname(tau_hat), se_tau = unname(se_tau), vcov = V, coef = coef(fit))
+}
+summarize_results <- function(res, alpha = 0.05) {
+  z <- qnorm(1 - alpha/2)
+  
+  ok <- is.finite(res$tau) & is.finite(res$se) & res$se > 0 & is.finite(res$truth)
+  r <- res[ok, , drop = FALSE]
+  
+  ci_lo <- r$tau - z * r$se
+  ci_hi <- r$tau + z * r$se
+  
+  bias <- r$tau - r$truth
+  
+  data.frame(
+    R_used       = nrow(r),
+    n_fail       = nrow(res) - nrow(r),
+    truth_used   = unique(r$truth)[1],
+    mean_tau     = mean(r$tau),
+    mc_bias      = mean(bias),
+    mc_mse       = mean(bias^2),
+    mc_emp_sd    = sd(r$tau),
+    mean_sand_se = mean(r$se),
+    cover_95     = mean(ci_lo <= r$truth & r$truth <= ci_hi)
+  )
+}
+
+run_one <- function(dat, m0_col, m1_col, truth_pop) {
+  fit <- tryCatch(ri_geex_fpgs_pred(dat, m0_col = m0_col, m1_col = m1_col),
+                  error = function(e) NULL)
+  if (is.null(fit) || !is.finite(fit$tau_hat) || !is.finite(fit$se_tau) || fit$se_tau <= 0) {
+    return(data.frame(tau = NA_real_, se = NA_real_, truth = truth_pop))
+  }
+  data.frame(tau = fit$tau_hat, se = fit$se_tau, truth = truth_pop)
+}
+
+run_mc_true_false_parametric <- function(sim_list, truth_pop) {
+  res_true  <- do.call(rbind, lapply(sim_list, run_one, m0_col="mu0",  m1_col="mu1",  truth_pop=truth_pop))
+  res_false <- do.call(rbind, lapply(sim_list, run_one, m0_col="mu0f", m1_col="mu1f", truth_pop=truth_pop))
+  
+  list(
+    res_true  = res_true,
+    res_false = res_false,
+    sum_true  = summarize_results(res_true),
+    sum_false = summarize_results(res_false)
+  )
+}
