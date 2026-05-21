@@ -27,6 +27,7 @@ matching_estimators <- function(data) {
       stop(paste("Replicate", i, "does not have 10 columns."))
     }
     
+    # ---- force numeric vectors ----
     Y  <- as.numeric(datat$y)
     Tr <- as.numeric(datat$tr)
     
@@ -63,7 +64,4 @@ matching_estimators <- function(data) {
   }
   
   return(out)
-}
-
-  return(cbind( dr_pt, dr_p_tp, dr_p_to, dr_pf, dr_pt_n, dr_p_tp_n, dr_p_to_n, dr_pf_n, dr_ft, dr_f_tp, dr_f_to, dr_ff, dr_ft_n, dr_f_tp_n, dr_f_to_n, dr_ff_n))
 }
